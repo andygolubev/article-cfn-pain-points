@@ -1,0 +1,36 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - Route 53 hosted zone stack
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack to (dev, stage, prod)
+    AllowedValues:
+      - "dev"
+      - "stage"
+      - "prod"
+  HostedZoneDomainNameParam:
+    Type: String
+    Description: The domain name of the Route 53 zone
+
+Resources:
+  DemoHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneDomainNameParam
+      HostedZoneConfig:
+        Comment: !Sub "${AWS::Region} Demo hosted zone for ${EnvironmentParam} environment"
+
+Outputs:
+  DemoHostedZoneID:
+    Description: ID of the demo hosted zone
+    Value: !Ref DemoHostedZone
+    Export:
+      Name: demo-hosted-zone-id
+  DemoHostedZoneName:
+    Description: Domain name of the demo hosted zone
+    Value: !Ref HostedZoneDomainNameParam
+    Export:
+      Name: demo-hosted-zone-domain-name
+  DemoHostedZoneNameServers:
+    Description: Name servers for the demo hosted zone
+    Value: !Join ["\n", !GetAtt DemoHostedZone.NameServers]

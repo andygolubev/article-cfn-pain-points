@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - AWS Backup stack for RDS
+
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack in
+  RDSBackupEnabledParam:
+    Type: String
+    Description: Enable or disable RDS backups
+    AllowedValues: ['true', 'false']
+  RDSBackupRetentionPeriodParam:
+    Type: Number
+    Description: Number of days to retain RDS backups
+  RDSBackupScheduleExpressionParam:
+    Type: String
+    Description: Cron expression for RDS backup schedule
+  RDSKMSKeyArnParam:
+    Type: String
+
+Conditions:
+  RDSBackupEnabledCondition: !Equals [ !Ref RDSBackupEnabledParam, 'true' ]
+
+Resources:
+  DemoRDSBackupVault:
+    Type: AWS::Backup::BackupVault
+    Condition: RDSBackupEnabledCondition
+    Properties: 
+      BackupVaultName: DemoRDSBackupVault
+      EncryptionKeyArn: !Ref AWS::NoValue  # Use the default AWS managed key
+
+  DemoRDSBackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Condition: RDSBackupEnabledCondition
+    Properties: 
+      BackupPlan: 
+        BackupPlanName: DemoRDSBackupPlan
+        BackupPlanRule: 
+          - RuleName: DemoBackupRule
+            EnableContinuousBackup: true
+            TargetBackupVault: !Ref DemoRDSBackupVault
+            ScheduleExpression: !Ref RDSBackupScheduleExpressionParam
+            StartWindowMinutes: 60  # Backup job must start within this window (in minutes)
+            CompletionWindowMinutes: 180  # Backup job must complete within this window (in minutes)
+            Lifecycle: 
+              DeleteAfterDays: !Ref RDSBackupRetentionPeriodParam
+
+  DemoRDSBackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Condition: RDSBackupEnabledCondition
+    Properties: 
+      BackupPlanId: !Ref DemoRDSBackupPlan
+      BackupSelection: 
+        SelectionName: DemoRDSBackupSelection
+        IamRoleArn: !GetAtt DemoRDSBackupRole.Arn
+        Resources: 
+          - !Sub arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:*
+
+  DemoRDSBackupRole:
+    Type: AWS::IAM::Role
+    Condition: RDSBackupEnabledCondition
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+      Policies: 
+        - PolicyName: DemoAllowRDSBackup
+          PolicyDocument: 
+            Version: '2012-10-17'
+            Statement: 
+              - Effect: Allow
+                Action: kms:DescribeKey
+                Resource: !Ref RDSKMSKeyArnParam
+              - Effect: Allow
+                Action:
+                  - backup:CopyIntoBackupVault
+                  - backup:StartCopyJob
+                Resource: 
+                  - !Sub arn:aws:backup:${AWS::Region}:${AWS::AccountId}:backup-vault:*
+              - Effect: Allow
+                Action: kms:CreateGrant
+                Resource: "*"
+                Condition:
+                  Bool:
+                    kms:GrantIsForAWSResource: true
+
+ 

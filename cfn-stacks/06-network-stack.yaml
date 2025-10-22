@@ -1,0 +1,352 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Article Demo - Network resources stack
+
+Parameters: 
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack in
+  CidrBlockParam:
+    Type: String
+    Description: The CIDR block for the VPC (e.g. 10.30.0.0/16)
+
+
+Conditions:
+  IsProd: !Equals [ !Ref EnvironmentParam, 'prod' ]
+
+Resources:
+  DemoVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref CidrBlockParam
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub DemoVPC-${EnvironmentParam}
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: !Sub 
+        - ${FirstOctet}.${SecondOctet}.1.0/24
+        - FirstOctet: !Select [0, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+          SecondOctet: !Select [1, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+        - Key: Name
+          Value: !Sub PublicSubnet1-${EnvironmentParam}
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: !Sub 
+        - ${FirstOctet}.${SecondOctet}.2.0/24
+        - FirstOctet: !Select [0, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+          SecondOctet: !Select [1, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+        - Key: Name
+          Value: !Sub PublicSubnet2-${EnvironmentParam}
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: !Sub 
+        - ${FirstOctet}.${SecondOctet}.3.0/24
+        - FirstOctet: !Select [0, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+          SecondOctet: !Select [1, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+      AvailabilityZone: !Select
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+        - Key: Name
+          Value: !Sub PublicSubnet3-${EnvironmentParam}
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: !Sub 
+        - ${FirstOctet}.${SecondOctet}.11.0/24
+        - FirstOctet: !Select [0, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+          SecondOctet: !Select [1, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+      AvailabilityZone: !Select
+        - 0
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+        - Key: Name
+          Value: !Sub PrivateSubnet1-${EnvironmentParam}
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: !Sub 
+        - ${FirstOctet}.${SecondOctet}.12.0/24
+        - FirstOctet: !Select [0, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+          SecondOctet: !Select [1, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+      AvailabilityZone: !Select
+        - 1
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+        - Key: Name
+          Value: !Sub PrivateSubnet2-${EnvironmentParam}
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref DemoVPC
+      CidrBlock: !Sub 
+        - ${FirstOctet}.${SecondOctet}.13.0/24
+        - FirstOctet: !Select [0, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+          SecondOctet: !Select [1, !Split [".", !Select [0, !Split ["/", !Ref CidrBlockParam]]]]
+      AvailabilityZone: !Select
+        - 2
+        - Fn::GetAZs: !Ref 'AWS::Region'
+      Tags:
+        - Key: Name
+          Value: !Sub PrivateSubnet3-${EnvironmentParam}
+    
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  # Attach Internet Gateway to VPC
+  AttachInternetGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref DemoVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Route Table
+  ## Public Route Table
+  DemoPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DemoVPC
+
+  ## Private Route Table for each AZ
+  DemoPrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DemoVPC
+      Tags:
+        - Key: Name
+          Value: !Sub DemoPrivateRouteTable1-${EnvironmentParam}
+
+  DemoPrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DemoVPC
+      Tags:
+        - Key: Name
+          Value: !Sub DemoPrivateRouteTable2-${EnvironmentParam}
+
+  DemoPrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref DemoVPC
+      Tags:
+        - Key: Name
+          Value: !Sub DemoPrivateRouteTable3-${EnvironmentParam}
+
+  # S3 Gateway VPC Endpoint for DemoVPC
+  DemoS3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref DemoVPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref DemoPrivateRouteTable1
+        - !Ref DemoPrivateRouteTable2
+        - !Ref DemoPrivateRouteTable3
+        - !Ref DemoPublicRouteTable
+
+  # Route tables
+  ## Route to Internet Gateway
+  RouteToInternetGateway:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGateway
+    Properties:
+      RouteTableId: !Ref DemoPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Security Groups
+  DemoLambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Security Group for Lambda functions
+      VpcId: !Ref DemoVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: DemoLambdaSecurityGroup
+
+  # Associate the Public subnet with the public route table
+  DemoSubnetPublicRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !GetAtt PublicSubnet1.SubnetId
+      RouteTableId: !Ref DemoPublicRouteTable
+
+  DemoSubnetPublicRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !GetAtt PublicSubnet2.SubnetId
+      RouteTableId: !Ref DemoPublicRouteTable
+
+  DemoSubnetPublicRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !GetAtt PublicSubnet3.SubnetId
+      RouteTableId: !Ref DemoPublicRouteTable
+
+  # Associate each private subnet with the respective private route table
+  DemoSubnetPrivateRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !GetAtt PrivateSubnet1.SubnetId
+      RouteTableId: !Ref DemoPrivateRouteTable1
+
+  DemoSubnetPrivateRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !GetAtt PrivateSubnet2.SubnetId
+      RouteTableId: !Ref DemoPrivateRouteTable2
+
+  DemoSubnetPrivateRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !GetAtt PrivateSubnet3.SubnetId
+      RouteTableId: !Ref DemoPrivateRouteTable3
+
+  DemoRDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "Subnet group for ${EnvironmentParam} RDS"
+      DBSubnetGroupName: !Sub "${AWS::StackName}-DBSubnetGroup"
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+
+  DemoRDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for ${EnvironmentParam} RDS"
+      GroupName: !Sub "${AWS::StackName}-DBSecurityGroup"
+      VpcId: !Ref DemoVPC
+      SecurityGroupIngress:
+        - FromPort: 5432
+          ToPort: 5432
+          IpProtocol: tcp
+          CidrIp: !Ref CidrBlockParam
+
+  ## Route to NAT Gateway
+  DemoRouteToNATGateway1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DemoPrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref DemoNATGateway1
+
+  DemoRouteToNATGateway2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DemoPrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !If [IsProd, !Ref DemoNATGateway2, !Ref DemoNATGateway1]
+
+  DemoRouteToNATGateway3:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref DemoPrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !If [IsProd, !Ref DemoNATGateway3, !Ref DemoNATGateway1]
+
+  # NAT Gateway
+  ## NAT Gateway for each private subnet in the respective AZ
+  DemoNATGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !ImportValue demo-nat-gateway-eip-1-allocation-id
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub DemoNATGateway1-${EnvironmentParam}
+
+  DemoNATGateway2:
+    Condition: IsProd # Only create NAT Gateway 2 in prod environment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !ImportValue demo-nat-gateway-eip-2-allocation-id
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub DemoNATGateway2-${EnvironmentParam}
+
+  DemoNATGateway3:
+    Condition: IsProd # Only create NAT Gateway 3 in prod environment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !ImportValue demo-nat-gateway-eip-3-allocation-id
+      SubnetId: !Ref PublicSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub DemoNATGateway3-${EnvironmentParam}
+
+Outputs:
+  DemoVpcCidr:
+    Description: The CIDR block of the VPC
+    Value: !Ref CidrBlockParam
+    Export:
+      Name: demo-vpc-cidr
+
+  DemoVPC:
+    Value: !Ref DemoVPC
+    Export:
+      Name: demo-vpc-id
+
+  DemoPublicSubnets:
+    Description: List of public subnets
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3]]
+    Export:
+      Name: demo-public-subnet-ids
+
+  DemoPrivateSubnets:
+    Description: List of private subnets
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3]]
+    Export:
+      Name: demo-private-subnet-ids
+
+  DemoPrivateRouteTableIDs:
+    Description: List of private route table IDs
+    Value: !Join [",", [!Ref DemoPrivateRouteTable1, !Ref DemoPrivateRouteTable2, !Ref DemoPrivateRouteTable3]]
+    Export:
+      Name: demo-private-route-table-ids
+
+  DemoLambdaSecurityGroupID:
+    Value: !Ref DemoLambdaSecurityGroup
+    Export:
+      Name: demo-lambda-security-group-id
+
+  DemoRDSSubnetGroup:
+    Value: !Ref DemoRDSSubnetGroup
+    Export:
+      Name: demo-rds-subnet-group-id
+
+  DemoRDSSecurityGroup:
+    Value: !Ref DemoRDSSecurityGroup
+    Export:
+      Name: demo-rds-security-group-id

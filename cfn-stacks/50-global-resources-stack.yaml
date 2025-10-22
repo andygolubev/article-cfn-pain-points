@@ -1,0 +1,208 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - Cloudformation stack for certificates and CloudFront distribution
+
+Parameters:
+  DemoCloudFrontCertificateDomainNameParam:
+    Type: String
+    Description: The certificate name for demo portal cloudfront distribution
+  HostedZoneIdParam:
+    Type: String
+    Description: The Route53 hosted zone id
+  HostedZoneDomainNameParam:
+    Type: String
+    Description: The domain name of the Route 53 zone
+  S3DemoBucketName:
+    Type: String
+    Description: The URL for the demo portal
+  S3DemoBucketOAI:
+    Type: String
+    Description: The CloudFront Origin Access Identity for the Demo distribution
+  S3DemoBucketRegion:
+    Type: String
+    Description: The region where S3 demo bucket is located
+
+Resources:
+  DemoCloudFrontCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub "${DemoCloudFrontCertificateDomainNameParam}.${HostedZoneDomainNameParam}"
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub "${DemoCloudFrontCertificateDomainNameParam}.${HostedZoneDomainNameParam}"
+          HostedZoneId: !Ref HostedZoneIdParam
+
+  DemoCloudFrontWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      DefaultAction: 
+        Allow: {}
+      Name: DemoCloudFrontWebACL
+      Description: "WebACL for the Article Demo CloudFront distribution"
+      Rules: 
+        - Name: AWS-AWSManagedRulesCommonRuleSet
+          Priority: 8
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: coreWebApplicationRules
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules:
+                - Name: SizeRestrictions_BODY
+                - Name: CrossSiteScripting_BODY
+                - Name: GenericLFI_BODY
+        - Name: AWS-AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 9
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: knownBadInputsRule
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+        - Name: AWS-AWSManagedRulesUnixRuleSet
+          Priority: 10
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: posixVulnerabilitiesRule
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesUnixRuleSet
+        - Name: AWS-AWSManagedRulesAnonymousIpList
+          Priority: 12
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: anonymousIpRule
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAnonymousIpList
+      Scope: CLOUDFRONT
+      VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: demoWafMetric
+
+
+
+  DemoCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        WebACLId: !GetAtt DemoCloudFrontWebACL.Arn
+        Comment: 'CloudFront distribution for the article demo portal'
+        Origins:
+          - DomainName: !Sub "${S3DemoBucketName}.s3.${S3DemoBucketRegion}.amazonaws.com"
+            Id: !Sub 'S3Origin-demo.${HostedZoneDomainNameParam}'
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${S3DemoBucketOAI}"
+        Aliases: 
+          - !Sub ${DemoCloudFrontCertificateDomainNameParam}.${HostedZoneDomainNameParam}
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: none
+          Compress: true
+          TargetOriginId: !Sub 'S3Origin-demo.${HostedZoneDomainNameParam}'
+          ViewerProtocolPolicy: 'redirect-to-https'
+          FunctionAssociations:
+            - EventType: viewer-response
+              FunctionARN: !GetAtt DemoSecurityHeadersFunction.FunctionARN
+        DefaultRootObject: 'index.html'
+        CustomErrorResponses:
+          - ErrorCachingMinTTL: 300
+            ErrorCode: 403
+            ResponseCode: '200'
+            ResponsePagePath: /index.html
+          - ErrorCachingMinTTL: 0
+            ErrorCode: 404
+            ResponseCode: '200'
+            ResponsePagePath: /index.html
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_All
+        ViewerCertificate:
+          AcmCertificateArn: !Ref DemoCloudFrontCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2019
+
+  DemoCloudFrontRoute53Record:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneIdParam
+      Comment: !Sub Route53 record for CloudFront distributions for ${DemoCloudFrontCertificateDomainNameParam}.${HostedZoneDomainNameParam}
+      Name: !Sub ${DemoCloudFrontCertificateDomainNameParam}.${HostedZoneDomainNameParam}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt DemoCloudFrontDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2 # DONT change! It is a magical alphanumeric ID provided by AWS team for CloudFront distribution
+
+  DemoSecurityHeadersFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: DemoSecurityHeadersFunction
+      AutoPublish: true
+      FunctionConfig:
+        Comment: 'Function to add security headers to demo responses'
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function handler(event) {
+          var response = event.response;
+          var headers = response.headers;
+          
+          headers['content-security-policy'] = {
+            value: [
+              "base-uri 'self';",
+              "default-src 'self';",
+              "script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://*.google-analytics.com;",
+              "style-src  'self' 'unsafe-inline' https://fonts.googleapis.com;",
+              "font-src   'self' https://fonts.gstatic.com https://use.fontawesome.com;",
+              "img-src    'self' data: blob: https://*.google-analytics.com;",
+              "connect-src 'self' https://*.google-analytics.com https://*.example.com https://api.dev.example.com;",
+              "object-src 'none';",
+              "frame-ancestors 'none';",
+              "upgrade-insecure-requests; block-all-mixed-content"
+            ].join(' ')
+          };
+          
+          headers['strict-transport-security'] = {
+            value: 'max-age=63072000; includeSubdomains; preload'
+          };
+          headers['x-content-type-options'] = {
+            value: 'nosniff'
+          };
+          headers['x-frame-options'] = {
+            value: 'DENY'
+          };
+          headers['x-xss-protection'] = {
+            value: '1; mode=block'
+          };
+          headers['referrer-policy'] = {
+            value: 'same-origin'
+          };
+          
+          return response;
+        }
+

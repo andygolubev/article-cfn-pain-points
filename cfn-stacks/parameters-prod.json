@@ -1,0 +1,94 @@
+[
+    {
+        "ParameterKey": "EnvironmentParam",
+        "ParameterValue": "prod"
+    },
+    {
+        "ParameterKey": "CidrBlockParam",
+        "ParameterValue": "10.110.0.0/16"
+    },
+    {
+        "ParameterKey": "RDSBackupEnabledParam",
+        "ParameterValue": "true"
+    },
+    {
+        "ParameterKey": "RedisBackupEnabledParam",
+        "ParameterValue": "true"
+    },
+    {
+        "ParameterKey": "RedisBackupVaultNameInDRRegionParam",
+        "ParameterValue": "RedisReplicatedBackupVault"
+    },
+    {
+        "ParameterKey": "HostedZoneDomainNameParam",
+        "ParameterValue": "prod.example.com"
+    },
+    {
+        "ParameterKey": "DemoApiGatewaySubDomainNameParam",
+        "ParameterValue": "api"
+    },
+    {
+        "ParameterKey": "DemoCloudFrontCertificateDomainNameParam",
+        "ParameterValue": "front"
+    },
+    {
+        "ParameterKey": "DemoDBEngineVersionParam",
+        "ParameterValue": "17"
+    },
+    {
+        "ParameterKey": "DemoDBMinAcuParam",
+        "ParameterValue": "2"
+    },
+    {
+        "ParameterKey": "DemoDBMaxAcuParam",
+        "ParameterValue": "20"
+    },
+    {
+        "ParameterKey": "DemoDBNameParam",
+        "ParameterValue": "demo"
+    },
+    {
+        "ParameterKey": "DemoDBMasterUsernameParam",
+        "ParameterValue": "demo"
+    },
+    {
+        "ParameterKey": "DemoDBDeletionProtectionParam",
+        "ParameterValue": "true"
+    },
+    {
+        "ParameterKey": "RDSBackupRetentionPeriodParam",
+        "ParameterValue": "7"
+    },
+    {
+        "ParameterKey": "RDSBackupScheduleExpressionParam",
+        "ParameterValue": "cron(0 * * * ? *)"
+    },
+    {
+        "ParameterKey": "RedisEngineVersionParam",
+        "ParameterValue": "7.1"
+    },
+    {
+        "ParameterKey": "RedisInstanceTypeParam",
+        "ParameterValue": "cache.t3.medium"
+    },
+    {
+        "ParameterKey": "RedisNumberOfReplicasParam",
+        "ParameterValue": "2"
+    },
+    {
+        "ParameterKey": "RedisAutomaticFailoverEnabledParam",
+        "ParameterValue": "true"
+    },
+    {
+        "ParameterKey": "RedisMultiAZEnabledParam",
+        "ParameterValue": "true"
+    },
+    {
+        "ParameterKey": "WafScopeParam",
+        "ParameterValue": "REGIONAL"
+    },
+    {
+        "ParameterKey": "LambdaLayerS3ObjectVersionParam",
+        "ParameterValue": ""
+    }
+]

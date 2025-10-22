@@ -1,0 +1,208 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: The main stack for the demo stack, which will deploy all the nested stacks.
+
+Parameters:
+
+# Global params
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack in
+    AllowedValues:
+         - "dev"
+         - "stage"
+         - "prod"
+
+# Extra params that are not required in this stack
+  HostedZoneDomainNameParam:
+    Type: String
+    Description: The demo domain name for hosted zone. Used by another stack. DO NOT DELETE!
+
+# Backup params
+  RDSBackupEnabledParam:
+    Type: String
+  RDSBackupRetentionPeriodParam:
+    Type: Number
+  RDSBackupScheduleExpressionParam:
+    Type: String
+
+# Redis params
+  RedisEngineVersionParam:
+    Type: String
+    Description: Engine version for the Redis
+
+  RedisInstanceTypeParam:
+    Type: String
+    Description: Instance type for the Redis
+
+  RedisNumberOfReplicasParam:
+    Type: Number
+    Description: Number of replicas for the Redis
+    Default: 1
+  RedisAutomaticFailoverEnabledParam:
+    Type: String
+    Description: Enable automatic failover for the Redis
+    Default: false
+  RedisMultiAZEnabledParam:
+    Type: String
+    Description: Enable MultiAZ for the Redis
+    Default: false
+
+# API Gateway params
+  DemoApiGatewaySubDomainNameParam:
+    Type: String
+    Description: Subdomain name for the API Gateway
+
+# WAF params
+  WafScopeParam:
+    Type: String
+    Description: Scope for the WAF
+    AllowedValues:
+      - "REGIONAL"
+      - "CLOUDFRONT"
+
+# Demo RDS params
+  DemoDBEngineVersionParam:
+    Type: String
+    Description: PostgreSQL engine version for Demo Aurora
+  DemoDBMinAcuParam:
+    Type: Number
+    Description: Minimum ACU for Demo Aurora Serverless v2 scaling
+  DemoDBMaxAcuParam:
+    Type: Number
+    Description: Maximum ACU for Demo Aurora Serverless v2 scaling
+  DemoDBNameParam:
+    Type: String
+    Description: Name of the Demo database
+  DemoDBMasterUsernameParam:
+    Type: String
+    Description: Master username for the Demo database
+  DemoDBDeletionProtectionParam:
+    Type: String
+    Description: Enable deletion protection for the Demo RDS instance
+    AllowedValues:
+      - "true"
+      - "false"
+
+# Lambda layer params
+  LambdaLayerUpdateReplacePolicyParam:
+    Type: String
+    Description: Resource replace policy for the lambda layer
+    Default: Retain
+  LambdaLayerS3ObjectVersionParam:
+    Type: String
+    Description: The S3 object version for the lambda layer zip
+
+# CloudFront certificate params
+  DemoCloudFrontCertificateDomainNameParam:
+    Type: String
+    Description: The certificate name for demo cloudfront distribution
+
+Resources:
+  SecretManagerStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 12-secret-manager-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+
+  BackupStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 13-backup-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+        RDSBackupEnabledParam: !Ref RDSBackupEnabledParam
+        RDSBackupRetentionPeriodParam: !Ref RDSBackupRetentionPeriodParam
+        RDSBackupScheduleExpressionParam: !Ref RDSBackupScheduleExpressionParam
+        RDSKMSKeyArnParam: !ImportValue demo-rds-kms-key-arn
+
+  RDSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 14-rds-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+        DBEngineVersionParam: !Ref DemoDBEngineVersionParam
+        DBMinACUParam: !Ref DemoDBMinAcuParam
+        DBMaxACUParam: !Ref DemoDBMaxAcuParam
+        DBNameParam: !Ref DemoDBNameParam
+        DBMasterUsernameParam: !Ref DemoDBMasterUsernameParam
+        DBDeletionProtectionParam: !Ref DemoDBDeletionProtectionParam
+        RDSKMSKeyArnParam: !ImportValue demo-rds-kms-key-arn
+        RDSBackupRetentionPeriodParam: !Ref RDSBackupRetentionPeriodParam
+        DemoRDSSubnetGroupIdParam: !ImportValue demo-rds-subnet-group-id
+        RDSSecurityGroupIdParam: !ImportValue demo-rds-security-group-id
+
+  RedisStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 15-redis-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+        VpcIdParam: !ImportValue demo-vpc-id
+        VpcCidrParam: !ImportValue demo-vpc-cidr
+        SubnetIdsParam: !ImportValue demo-private-subnet-ids
+        EngineVersionParam: !Ref RedisEngineVersionParam
+        InstanceTypeParam: !Ref RedisInstanceTypeParam
+        NumberOfReplicasParam: !Ref RedisNumberOfReplicasParam
+        EnableAutomaticFailoverParam: !Ref RedisAutomaticFailoverEnabledParam
+        EnableMultiAZParam: !Ref RedisMultiAZEnabledParam
+        RedisKmsKeyIdParam: !ImportValue demo-redis-kms-key-arn
+
+  ECSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 16-ecs-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+        DemoVPCParam: !ImportValue demo-vpc-id
+        DemoPrivateSubnetsIDsParam: !ImportValue demo-private-subnet-ids
+        DemoBackendRepositoryParam: !ImportValue demo-ecr-repository-uri-for-backend-service
+
+  ApiGatewayStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 17-api-gateway-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+        HostedZoneIdParam: !ImportValue demo-hosted-zone-id
+        DemoInternalLoadBalancerDNSNameParam: !GetAtt ECSStack.Outputs.DemoBackendInternalLoadBalancerDNS
+        DemoApiGatewaySubDomainNameParam: !Ref DemoApiGatewaySubDomainNameParam
+        HostedZoneDomainNameParam: !Ref HostedZoneDomainNameParam
+        DemoInternalLoadBalancerArnParam: !GetAtt ECSStack.Outputs.DemoBackendInternalLoadBalancerArn
+
+  EventBridgeStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 18-event-bridge-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+
+  WAFStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 19-waf-nested-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+        ScopeParam: !Ref WafScopeParam
+        DemoApiGatewayArnParam: !GetAtt ApiGatewayStack.Outputs.ArticleDemoRestApiWafArn
+
+  LambdaStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: 20-lambda-stack.yaml
+      Parameters:
+        EnvironmentParam: !Ref EnvironmentParam
+        LambdaSubnetIds: !ImportValue demo-private-subnet-ids
+        LambdaSecurityGroups: !ImportValue demo-lambda-security-group-id
+        LambdaLayerUpdateReplacePolicyParam: !Ref LambdaLayerUpdateReplacePolicyParam
+        LambdaLayerS3ObjectVersionParam: !Ref LambdaLayerS3ObjectVersionParam
+
+  GlobalDemoCertificatesStackSet:
+    Type: AWS::CloudFormation::Stack
+    Properties: 
+      TemplateURL: 21-stack-set-nested-stack.yaml
+      Parameters:
+        DemoCloudFrontCertificateDomainNameParam: !Ref DemoCloudFrontCertificateDomainNameParam
+        HostedZoneIdParam: !ImportValue demo-hosted-zone-id
+        HostedZoneDomainNameParam: !Ref HostedZoneDomainNameParam

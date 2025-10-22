@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Cloudformation stack for certificates in us-east-1 region
+
+Parameters:
+  DemoCloudFrontCertificateDomainNameParam:
+    Type: String
+    Description: The certificate name for demo cloudfront distribution
+  HostedZoneIdParam:
+    Type: String
+    Description: The Route53 hosted zone id
+  HostedZoneDomainNameParam:
+    Type: String
+    Description: The Route53 hosted zone domain name
+
+Resources:
+  # CloudFormation Stack Sets assume execution role which requires all permissions
+  # to perform operations defined in the template of the stack set
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 
+        !Join ["-", [!Ref AWS::Region, AWSCloudFormationStackSetExecutionRole]]
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 
+                !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: CloudFormationStackSetExecutionPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:*'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'acm:RequestCertificate'
+                  - 'acm:DescribeCertificate'
+                  - 'acm:DeleteCertificate'
+                  - 'acm:GetCertificate'
+                  - 'acm:ListCertificates'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'route53:GetChange'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'route53:ChangeResourceRecordSets'
+                Resource: !Sub 'arn:aws:route53:::hostedzone/${HostedZoneIdParam}'
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:PutSecretValue'
+                  - 'secretsmanager:UpdateSecret'
+                Resource: !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:secret:acm-global-certificates-arns'
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:DeleteSecret'
+                  - 'secretsmanager:CreateSecret'
+                  - 'secretsmanager:ReplicateSecretToRegions'
+                  - 'secretsmanager:RemoveRegionsFromReplication'
+                Resource: !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:*'
+
+  #Allows CloudFormation to assume the execution role (required for Stack Sets)
+  AdministrationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 
+        !Join ["-", [!Ref AWS::Region, AWSCloudFormationStackSetAdministrationRole]]
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: AssumeRole-AWSCloudFormationStackSetExecutionRole
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource:
+                  - !Sub 'arn:*:iam::*:role/${ExecutionRole}'
+
+  CertificatesStackSet:
+    Type: AWS::CloudFormation::StackSet
+    Properties:
+      StackSetName: certificates-stack-set
+      Description: "Certificate stackset for creating certificates in us-east-1"
+      PermissionModel: SELF_MANAGED
+      AdministrationRoleARN: !GetAtt AdministrationRole.Arn
+      ExecutionRoleName: !Ref ExecutionRole
+      Parameters:
+        - ParameterKey: DemoCloudFrontCertificateDomainNameParam
+          ParameterValue: !Ref DemoCloudFrontCertificateDomainNameParam
+        - ParameterKey: HostedZoneIdParam
+          ParameterValue: !Ref HostedZoneIdParam
+        - ParameterKey: HostedZoneDomainNameParam
+          ParameterValue: !Ref HostedZoneDomainNameParam
+        - ParameterKey: AWSTargetRegionParam
+          ParameterValue: !Ref AWS::Region
+      StackInstancesGroup:
+        - Regions:
+            - us-east-1
+          DeploymentTargets:
+            Accounts:
+              - !Ref AWS::AccountId
+      TemplateBody: |
+        AWSTemplateFormatVersion: '2010-09-09'
+        Description: Article demo CloudFormation stack for a single ACM certificate used by CloudFront
+
+        Parameters:
+          DemoCloudFrontCertificateDomainNameParam:
+            Type: String
+            Description: Domain name for the article demo CloudFront certificate
+
+          HostedZoneIdParam:
+            Type: String
+            Description: Route 53 hosted zone id where DNS validation records will be created
+
+          HostedZoneDomainNameParam:
+            Type: String
+            Description: Route 53 hosted zone domain name used for certificate
+
+          AWSTargetRegionParam:
+            Type: String
+            Description: The AWS Region to replicate Secrets Manager secrets to
+
+        Resources:
+          DemoCloudFrontCertificate:
+            Type: AWS::CertificateManager::Certificate
+            Properties:
+              DomainName: !Sub "${DemoCloudFrontCertificateDomainNameParam}.${HostedZoneDomainNameParam}"
+              ValidationMethod: DNS
+              DomainValidationOptions:
+                - DomainName: !Sub "${DemoCloudFrontCertificateDomainNameParam}.${HostedZoneDomainNameParam}"
+                  HostedZoneId: !Ref HostedZoneIdParam
+
+          # Store the ACM certificate ARN in Secrets Manager (article demo). Cross-region outputs are not possible
+          ArticleDemoCertificateArnSecret:
+            Type: AWS::SecretsManager::Secret
+            Properties:
+              Name: acm-article-demo-certificate-arn
+              Description: Article demo – ARN for the single global CloudFront ACM certificate
+              SecretString: !Sub '{"DemoCloudFrontCertificateArn":"${DemoCloudFrontCertificate}"}'
+              ReplicaRegions:
+                - Region: !Ref AWSTargetRegionParam
+
+        Outputs:
+          DemoCloudFrontCertificateArn:
+            Description: ARN of the article demo CloudFront ACM certificate
+            Value: !Ref DemoCloudFrontCertificate
+            Export:
+              Name: article-demo-cf-certificate-arn

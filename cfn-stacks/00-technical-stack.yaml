@@ -1,0 +1,356 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - Technical stack for S3 bucket and shared resources
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack to (dev, stage, prod)
+    AllowedValues:
+      - "dev"
+      - "stage"
+      - "prod"
+
+Resources:
+
+########################################################
+##
+## S3 Bucket CFN Deploy Artifacts
+##
+########################################################
+
+  DemoDeploymentArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "cloudformation-${AWS::AccountId}-${AWS::Region}"
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteAfter14Days
+            Status: Enabled
+            ExpirationInDays: 14
+            NoncurrentVersionExpirationInDays: 14       
+      Tags:
+        - Key: environment
+          Value: !Ref EnvironmentParam
+        - Key: owner
+          Value: Article Demo
+    DeletionPolicy: Delete
+
+  DemoEventLoggerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "DemoEventLogger-${AWS::AccountId}-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "DemoEventLogger-${AWS::AccountId}-${AWS::Region}"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:*"
+
+  DemoCloudFormationEventLoggerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: __DemoCloudFormationEventLogger
+      Handler: index.lambda_handler
+      Role: !GetAtt DemoEventLoggerExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+
+          def lambda_handler(event, context):
+              print(json.dumps(event))
+              
+              return {
+                  'statusCode': 200,
+                  'body': json.dumps('Event logged successfully')
+              }
+      Runtime: python3.13
+      Architectures: 
+        - arm64
+      Timeout: 30
+      Tags:
+        - Key: Created
+          Value: CloudFormation
+
+  DemoCloudFormationEventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: demo-cloudformation-events
+      EventPattern:
+        source:
+          - aws.cloudformation
+      Targets:
+        - Arn: !GetAtt DemoCloudFormationEventLoggerFunction.Arn
+          Id: DemoEventLoggerTarget
+
+  DemoEventLoggerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DemoCloudFormationEventLoggerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DemoCloudFormationEventsRule.Arn
+
+  DemoEventLoggerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DemoCloudFormationEventLoggerFunction}"
+      RetentionInDays: 1
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+
+  DemoDeploymentErrorQueryDefinition:
+    Type: AWS::Logs::QueryDefinition
+    Properties:
+      Name: demo-deployment-errors
+      LogGroupNames:
+        - !Sub "/aws/lambda/${DemoCloudFormationEventLoggerFunction}"
+      QueryString: |
+        fields @timestamp, @message, @logStream
+        | filter @message like /(?i)fail(ed|ure)/
+        | sort @timestamp desc
+        | limit 200
+      QueryLanguage: CWLI
+
+########################################################
+##
+## ECR Repositories
+##
+########################################################
+
+  DemoBackendServiceRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: demo-backend-service
+      LifecyclePolicy:
+        # keep 5 images
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 2,
+                "description": "Keep only 5 images, the rest will be deleted.",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: environment
+          Value: !Ref EnvironmentParam
+        - Key: owner
+          Value: Article Demo
+
+  DemoAntivirusScannerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: demo-antivirus-scanner
+      LifecyclePolicy:
+        # keep 5 images
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 2,
+                "description": "Keep only 5 images, the rest will be deleted.",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: environment
+          Value: !Ref EnvironmentParam
+        - Key: owner
+          Value: Article Demo
+
+########################################################
+##
+## KMS Keys
+##
+########################################################
+
+  RDSKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for database encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          # Allow the root account full access to manage the key
+          - Sid: "Enable IAM User Permissions"
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+          # Allow RDS to use the key for encryption and decryption
+          - Sid: "Allow RDS Use of the Key"
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+          # Allow AWS Backup to use the key for backup and restore operations
+          - Sid: "Allow AWS Backup Use of the Key"
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+
+  RDSKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/demo-rds-aurora-key
+      TargetKeyId: !Ref RDSKMSKey
+
+  RedisKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for Redis encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          # Allow the root account full access to manage the key
+          - Sid: "Enable IAM User Permissions"
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+          # Allow Redis to use the key for encryption and decryption
+          - Sid: "Allow Redis Use of the Key"
+            Effect: Allow
+            Principal:
+              Service: elasticache.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+          # Allow AWS Backup to use the key for backup and restore operations
+          - Sid: "Allow AWS Backup Use of the Key"
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+              - kms:CreateGrant
+            Resource: "*"
+
+  RedisKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/demo-redis-key
+      TargetKeyId: !Ref RedisKMSKey
+
+  EBSKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for EBS encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          # Allow the root account full access to manage the key
+          - Sid: "Enable IAM User Permissions"
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+          # Allow EBS to use the key for encryption and decryption
+          - Sid: "Allow EBS Use of the Key"
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: "kms:*"
+            Resource: "*"
+          # Allow AWS Backup to use the key for backup and restore operations
+          - Sid: "Allow AWS Backup Use of the Key"
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: "kms:*"
+            Resource: "*"
+
+  EBSKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/demo-ebs-key
+      TargetKeyId: !Ref EBSKMSKey
+
+Outputs:
+  DemoDeploymentArtifactsBucket:
+    Description: The S3 bucket for deployment artifacts
+    Value: !Ref DemoDeploymentArtifactsBucket
+    Export:
+      Name: demo-s3-bucket-for-main-stack
+  DemoBackendServiceRepositoryUri:
+    Description: The ECR repository URI for the demo backend service
+    Value: !GetAtt DemoBackendServiceRepository.RepositoryUri
+    Export:
+      Name: demo-ecr-repository-uri-for-backend-service
+  DemoAntivirusScannerRepositoryUri:
+    Description: The ECR repository URI for the demo antivirus scanner service
+    Value: !GetAtt DemoAntivirusScannerRepository.RepositoryUri
+    Export:
+      Name: demo-ecr-repository-uri-for-antivirus-scanner
+  DemoRDSKMSKeyArn:
+    Description: KMS key ARN for RDS Aurora database encryption
+    Value: !GetAtt RDSKMSKey.Arn
+    Export:
+      Name: demo-rds-kms-key-arn
+  DemoRedisKMSKeyArn:
+    Description: KMS key ARN for Redis ElastiCache encryption
+    Value: !GetAtt RedisKMSKey.Arn
+    Export:
+      Name: demo-redis-kms-key-arn
+  DemoEBSKMSKeyArn:
+    Description: KMS key ARN for EBS volume encryption
+    Value: !GetAtt EBSKMSKey.Arn
+    Export:
+      Name: demo-ebs-kms-key-arn

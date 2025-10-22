@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - S3 Buckets stack
+
+Resources:
+  DemoFrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "demo-frontend-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: false
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: false
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      VersioningConfiguration:
+        Status: Suspended
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+            AllowedOrigins:
+              - '*'
+            MaxAge: 3000
+
+  DemoFrontendCloudFrontOAI:
+    Type: "AWS::CloudFront::CloudFrontOriginAccessIdentity"
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: "OAI for Demo Frontend S3 origin"
+
+  DemoFrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DemoFrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontAccess
+            Effect: Allow
+            Principal:
+              CanonicalUser: !GetAtt DemoFrontendCloudFrontOAI.S3CanonicalUserId
+            Action: 's3:GetObject'
+            Resource: !Sub arn:aws:s3:::${DemoFrontendBucket}/*
+          - Sid: AllowSSLRequestsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+            - !Sub arn:aws:s3:::${DemoFrontendBucket}
+            - !Sub arn:aws:s3:::${DemoFrontendBucket}/*
+            Condition:
+              Bool:
+                "aws:SecureTransport": false
+
+
+
+Outputs:
+  DemoFrontendBucketName:
+    Description: S3 bucket for frontend application
+    Value: !Ref DemoFrontendBucket
+    Export:
+      Name: demo-s3-bucket-for-frontend
+
+  DemoFrontendCloudFrontOAI:
+    Description: The CloudFront Origin Access Identity for the frontend distribution
+    Value: !Ref DemoFrontendCloudFrontOAI
+    Export:
+      Name: demo-s3-frontend-cloudfront-oai

@@ -1,0 +1,343 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - ECS backend service stack with Network Load Balancer
+
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy to
+    AllowedValues: ["dev", "stage", "prod"]
+  DemoVPCParam:
+    Type: String
+    Description: VPC ID for the demo environment
+  DemoPrivateSubnetsIDsParam:
+    Type: String
+    Description: Comma-separated list of private subnet IDs
+  DemoBackendRepositoryParam:
+    Type: String
+    Description: ECR repository URI for the backend service
+  DemoBackendPortParam:
+    Type: String
+    Description: Port number for the backend service
+    Default: 8080
+
+Conditions:
+  IsProductionEnvironment: !Equals [!Ref EnvironmentParam, "prod"]
+
+Resources:
+  # ECS Cluster
+  DemoECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub demo-cluster-${EnvironmentParam}
+      ClusterSettings:
+        - Name: containerInsights
+          Value: !If 
+            - IsProductionEnvironment
+            - enhanced
+            - disabled
+
+  # Security Groups
+  InternalLoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for demo internal NLB
+      VpcId: !Ref DemoVPCParam
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+      Tags:
+        - Key: Name
+          Value: !Sub demo-internal-nlb-sg-${EnvironmentParam}
+
+  DemoBackendServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for demo backend ECS service
+      VpcId: !Ref DemoVPCParam
+      Tags:
+        - Key: Name
+          Value: !Sub demo-backend-sg-${EnvironmentParam}
+
+  DemoBackendServiceSecurityGroupIngressFromNLB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow traffic from internal NLB
+      GroupId: !Ref DemoBackendServiceSecurityGroup
+      IpProtocol: tcp
+      FromPort: !Ref DemoBackendPortParam
+      ToPort: !Ref DemoBackendPortParam
+      SourceSecurityGroupId: !Ref InternalLoadBalancerSG
+
+  # Backend Internal Network Load Balancer
+  DemoBackendInternalLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub demo-backend-nlb-${EnvironmentParam}
+      Type: network
+      Scheme: internal
+      IpAddressType: ipv4
+      Subnets:
+        - !Select [0, !Split [",", !Ref DemoPrivateSubnetsIDsParam]]
+        - !Select [1, !Split [",", !Ref DemoPrivateSubnetsIDsParam]]
+        - !Select [2, !Split [",", !Ref DemoPrivateSubnetsIDsParam]]
+      SecurityGroups:
+        - !Ref InternalLoadBalancerSG
+
+  DemoBackendInternalLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref DemoBackendInternalLoadBalancer
+      Port: 80
+      Protocol: TCP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref DemoBackendTargetGroup
+
+  DemoBackendTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub demo-backend-tg-${EnvironmentParam}
+      TargetType: ip
+      Protocol: TCP
+      Port: !Ref DemoBackendPortParam
+      VpcId: !Ref DemoVPCParam
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      HealthCheckProtocol: HTTP
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 60
+      HealthCheckTimeoutSeconds: 30
+
+  # IAM Roles
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub demo-ecs-task-execution-role-${EnvironmentParam}
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: DemoECSTaskExecutionPolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:BatchGetImage'
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub demo-ecs-task-role-${EnvironmentParam}
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: DemoCloudWatchLogsPolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                - cloudwatch:PutMetricData
+                - logs:PutLogEvents
+                - logs:DescribeLogStreams
+                - logs:DescribeLogGroups
+                - logs:CreateLogStream
+                - logs:CreateLogGroup
+              Resource: '*'
+        - PolicyName: DemoECSExecCommandPolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                - ssmmessages:CreateControlChannel
+                - ssmmessages:CreateDataChannel
+                - ssmmessages:OpenControlChannel
+                - ssmmessages:OpenDataChannel
+              Resource: '*'
+
+  # CloudWatch Log Group
+  DemoBackendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/ecs/demo-backend-${EnvironmentParam}
+      RetentionInDays: 30
+
+  # Backend Task Definition
+  DemoBackendTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub demo-backend-${EnvironmentParam}
+      Cpu: 256
+      Memory: 512
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      TaskRoleArn: !Ref ECSTaskRole
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ContainerDefinitions:
+        - Name: backend
+          Image: !Ref DemoBackendRepositoryParam
+          Environment:
+            - Name: ENVIRONMENT
+              Value: !Ref EnvironmentParam
+            - Name: PORT
+              Value: !Ref DemoBackendPortParam
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - !Sub "curl -f http://localhost:${DemoBackendPortParam}/ || exit 1"
+            Interval: 30
+            Retries: 3
+            StartPeriod: 60
+            Timeout: 5
+          PortMappings:
+            - ContainerPort: !Ref DemoBackendPortParam
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              'awslogs-region': !Ref AWS::Region
+              'awslogs-group': !Ref DemoBackendLogGroup
+              'awslogs-stream-prefix': ecs
+
+  # Backend ECS Service
+  DemoBackendService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - DemoBackendInternalLoadBalancer
+      - DemoBackendInternalLoadBalancerListener
+    Properties:
+      ServiceName: !Sub demo-backend-${EnvironmentParam}
+      Cluster: !Ref DemoECSCluster
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      DesiredCount: !If 
+        - IsProductionEnvironment
+        - 2
+        - 1
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !Ref DemoBackendServiceSecurityGroup
+          Subnets:
+            - !Select [0, !Split [",", !Ref DemoPrivateSubnetsIDsParam]]
+            - !Select [1, !Split [",", !Ref DemoPrivateSubnetsIDsParam]]
+            - !Select [2, !Split [",", !Ref DemoPrivateSubnetsIDsParam]]
+      TaskDefinition: !Ref DemoBackendTaskDefinition
+      ServiceRegistries:
+        - RegistryArn: !GetAtt DemoBackendDiscoveryService.Arn
+      LoadBalancers:
+        - ContainerName: backend
+          ContainerPort: !Ref DemoBackendPortParam
+          TargetGroupArn: !Ref DemoBackendTargetGroup
+
+  # Service Discovery
+  ServiceDiscoveryHostedZone:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub demo-services-${EnvironmentParam}.local
+      Vpc: !Ref DemoVPCParam
+
+  DemoBackendDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Description: Service discovery for demo backend service
+      DnsConfig:
+        RoutingPolicy: MULTIVALUE
+        DnsRecords:
+          - TTL: 60
+            Type: A
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Name: backend
+      NamespaceId: !Ref ServiceDiscoveryHostedZone
+
+  # Auto Scaling
+  DemoBackendScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      MaxCapacity: 4
+      MinCapacity: !If 
+        - IsProductionEnvironment
+        - 2
+        - 1
+      ResourceId: !Join [ '/', [ service, !Ref DemoECSCluster, !GetAtt DemoBackendService.Name ] ]
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  DemoBackendScalingPolicyCPU:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub demo-backend-cpu-scaling-${EnvironmentParam}
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref DemoBackendScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70
+
+  DemoBackendScalingPolicyMemory:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub demo-backend-memory-scaling-${EnvironmentParam}
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref DemoBackendScalingTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: 80
+
+Outputs:
+  DemoECSClusterName:
+    Description: Name of the demo ECS cluster
+    Value: !Ref DemoECSCluster
+    Export:
+      Name: !Sub demo-ecs-cluster-name-${EnvironmentParam}
+
+  DemoECSClusterArn:
+    Description: ARN of the demo ECS cluster
+    Value: !GetAtt DemoECSCluster.Arn
+    Export:
+      Name: !Sub demo-ecs-cluster-arn-${EnvironmentParam}
+
+  DemoBackendServiceName:
+    Description: Name of the demo backend ECS service
+    Value: !GetAtt DemoBackendService.Name
+    Export:
+      Name: !Sub demo-backend-service-name-${EnvironmentParam}
+
+  DemoBackendInternalLoadBalancerArn:
+    Description: ARN of the demo backend internal NLB
+    Value: !Ref DemoBackendInternalLoadBalancer
+    Export:
+      Name: !Sub demo-backend-nlb-arn-${EnvironmentParam}
+
+  DemoBackendInternalLoadBalancerDNS:
+    Description: DNS name of the demo backend internal NLB
+    Value: !GetAtt DemoBackendInternalLoadBalancer.DNSName
+    Export:
+      Name: !Sub demo-backend-nlb-dns-${EnvironmentParam}

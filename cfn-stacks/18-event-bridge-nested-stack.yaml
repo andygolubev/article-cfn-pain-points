@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - EventBridge for monitoring console login events
+
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack to
+    AllowedValues: ["dev", "stage", "prod"]
+
+Resources:
+  # SNS Topic for Console Login Alerts
+  DemoConsoleLoginAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub demo-console-login-alerts-${EnvironmentParam}
+      DisplayName: Demo Console Login Alerts
+      Tags:
+        - Key: Name
+          Value: !Sub demo-console-login-alerts-${EnvironmentParam}
+        - Key: Environment
+          Value: !Ref EnvironmentParam
+        - Key: Owner
+          Value: Article Demo
+
+  # Console Login Success Notification Rule
+  DemoConsoleLoginSuccessRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub demo-console-login-success-${EnvironmentParam}
+      Description: Alert on successful console logins for security monitoring
+      EventBusName: default
+      EventPattern:
+        source:
+          - aws.signin
+        detail-type:
+          - AWS Console Sign In via CloudTrail
+        detail:
+          eventName:
+            - ConsoleLogin
+          responseElements:
+            ConsoleLogin:
+              - Success
+      State: ENABLED
+      Targets:
+        - Id: DemoConsoleLoginAlertsSNSTopic
+          Arn: !Ref DemoConsoleLoginAlertsTopic
+          InputTransformer:
+            InputPathsMap:
+              account: $.account
+              user: $.detail.userIdentity.principalId
+              sourceIp: $.detail.sourceIPAddress
+              time: $.time
+            InputTemplate: >-
+              "Account: <account>, User: <user>, Source IP: <sourceIp>, Time:
+              <time>, Info: Successful console login detected."
+
+Outputs:
+  DemoConsoleLoginAlertsTopicArn:
+    Description: ARN of the console login alerts SNS topic
+    Value: !Ref DemoConsoleLoginAlertsTopic
+    Export:
+      Name: !Sub demo-console-login-alerts-topic-arn-${EnvironmentParam}
+
+  DemoConsoleLoginRuleName:
+    Description: Name of the console login EventBridge rule
+    Value: !Ref DemoConsoleLoginSuccessRule
+    Export:
+      Name: !Sub demo-console-login-rule-name-${EnvironmentParam}

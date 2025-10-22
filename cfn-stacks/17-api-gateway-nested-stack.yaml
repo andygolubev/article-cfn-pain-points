@@ -1,0 +1,190 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to set up an API Gateway for the article demo
+
+Parameters:
+  EnvironmentParam:
+    Type: String
+  HostedZoneIdParam:
+    Type: String
+  DemoInternalLoadBalancerDNSNameParam:
+    Type: String
+  DemoApiGatewaySubDomainNameParam:
+    Type: String
+  DemoInternalLoadBalancerArnParam:
+    Type: String
+    Description: ARN of the internal NLB to use for VPC Link integration
+  HostedZoneDomainNameParam:
+    Type: String
+
+Resources:
+  ApiGatewayCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+
+  ApiGatewayAccount:
+    Type: AWS::ApiGateway::Account
+    Properties:
+      CloudWatchRoleArn: !GetAtt ApiGatewayCloudWatchLogsRole.Arn
+      
+  ArticleDemoRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: article-demo-rest
+      EndpointConfiguration:
+        Types: [REGIONAL]
+      BinaryMediaTypes:
+        - image/png
+        - image/jpeg
+        - image/jpg
+        - image/gif
+        - image/bmp
+        - application/pdf
+        - application/octet-stream
+        - multipart/form-data
+
+  ArticleDemoRestApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /api-gateway/article-demo-rest
+      RetentionInDays: 180
+
+  APIGatewayVpcLinkToInternalLoadBalancer:
+    Type: AWS::ApiGateway::VpcLink
+    Properties:
+      Name: article-demo-rest-vpclink
+      TargetArns:
+        - !Ref DemoInternalLoadBalancerArnParam
+
+  ArticleDemoRestApiRootResourceId:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt ArticleDemoRestApi.RootResourceId
+      PathPart: v1
+      RestApiId: !Ref ArticleDemoRestApi
+
+  ArticleDemoRestApiProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !Ref ArticleDemoRestApiRootResourceId
+      PathPart: '{proxy+}'
+      RestApiId: !Ref ArticleDemoRestApi
+
+  ArticleDemoRestApiAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: ANY
+      ResourceId: !Ref ArticleDemoRestApiRootResourceId
+      RestApiId: !Ref ArticleDemoRestApi
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref APIGatewayVpcLinkToInternalLoadBalancer
+        Uri: !Sub "http://${DemoInternalLoadBalancerDNSNameParam}/v1"
+        PassthroughBehavior: WHEN_NO_MATCH
+
+  ArticleDemoRestApiProxyAnyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: ANY
+      ResourceId: !Ref ArticleDemoRestApiProxyResource
+      RestApiId: !Ref ArticleDemoRestApi
+      RequestParameters:
+        method.request.path.proxy: true
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: ANY
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref APIGatewayVpcLinkToInternalLoadBalancer
+        Uri: !Sub "http://${DemoInternalLoadBalancerDNSNameParam}/v1/{proxy}"
+        RequestParameters:
+          integration.request.path.proxy: 'method.request.path.proxy'
+        PassthroughBehavior: WHEN_NO_MATCH
+
+  ArticleDemoRestApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ArticleDemoRestApiAnyMethod
+      - ArticleDemoRestApiProxyAnyMethod
+    Properties:
+      RestApiId: !Ref ArticleDemoRestApi
+
+  ArticleDemoRestApiStage:
+    Type: AWS::ApiGateway::Stage
+    DependsOn:
+      - ApiGatewayAccount
+    Properties:
+      RestApiId: !Ref ArticleDemoRestApi
+      DeploymentId: !Ref ArticleDemoRestApiDeployment
+      StageName: !Ref EnvironmentParam
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          LoggingLevel: INFO
+          MetricsEnabled: true
+      AccessLogSetting:
+        DestinationArn: !GetAtt ArticleDemoRestApiLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}'
+
+  # Custom domain for article demo API Gateway (REST)
+  ArticleDemoRestApiCustomDomain:
+    Type: AWS::ApiGateway::DomainName
+    Properties:
+      DomainName: !Sub '${DemoApiGatewaySubDomainNameParam}.${HostedZoneDomainNameParam}'
+      EndpointConfiguration:
+        Types: [REGIONAL]
+      RegionalCertificateArn: !Ref DemoApiGatewayCertificate
+      SecurityPolicy: TLS_1_2
+
+  # Map custom domain to the REST API stage
+  ArticleDemoRestApiMapping:
+    Type: AWS::ApiGateway::BasePathMapping
+    Properties:
+      DomainName: !Ref ArticleDemoRestApiCustomDomain
+      RestApiId: !Ref ArticleDemoRestApi
+      Stage: !Ref ArticleDemoRestApiStage
+
+  # Route53 alias record for custom domain
+  ArticleDemoRestApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneIdParam
+      Name: !Ref ArticleDemoRestApiCustomDomain
+      Type: A
+      AliasTarget:
+        HostedZoneId: !GetAtt ArticleDemoRestApiCustomDomain.RegionalHostedZoneId
+        DNSName: !GetAtt ArticleDemoRestApiCustomDomain.RegionalDomainName
+
+  ArticleDemoRestApiMissingAuthToken404:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      RestApiId: !Ref ArticleDemoRestApi
+      ResponseType: MISSING_AUTHENTICATION_TOKEN
+      StatusCode: "404"
+      ResponseTemplates:
+        application/json: '{"message":"Not Found"}'
+
+  DemoApiGatewayCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Sub '${DemoApiGatewaySubDomainNameParam}.${HostedZoneDomainNameParam}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Sub '${DemoApiGatewaySubDomainNameParam}.${HostedZoneDomainNameParam}'
+          HostedZoneId: !Ref HostedZoneIdParam
+
+Outputs:
+  ArticleDemoRestApiWafArn:
+    Description: ARN to use for WAF association for Article Demo API
+    Value: !Sub "arn:aws:apigateway:${AWS::Region}::/restapis/${ArticleDemoRestApi}/stages/${ArticleDemoRestApiStage}"

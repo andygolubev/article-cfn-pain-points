@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - Aurora PostgreSQL Serverless v2 (regional) cluster
+
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack to
+    AllowedValues: ["dev", "stage", "prod"]
+
+  DBEngineVersionParam:
+    Type: String
+    Description: PostgreSQL engine version for Aurora
+    Default: "15.4"
+
+  DBMinACUParam:
+    Type: Number
+    Description: Minimum ACU for Aurora Serverless v2 scaling
+    Default: 0.5
+
+  DBMaxACUParam:
+    Type: Number
+    Description: Maximum ACU for Aurora Serverless v2 scaling
+    Default: 2
+
+  DBNameParam:
+    Type: String
+    Description: Name of the database
+    Default: demodb
+
+  DBMasterUsernameParam:
+    Type: String
+    Description: Master username for the database
+    Default: demoadmin
+
+  DBDeletionProtectionParam:
+    Type: String
+    Description: Enable deletion protection for the database cluster
+    AllowedValues: ["true", "false"]
+    Default: "false"
+
+  RDSKMSKeyArnParam:
+    Type: String
+    Description: KMS key ARN for database encryption
+
+  RDSBackupRetentionPeriodParam:
+    Type: Number
+    Description: Backup retention period in days
+    Default: 7
+
+  DemoRDSSubnetGroupIdParam:
+    Type: String
+    Description: ID of the RDS subnet group
+
+  RDSSecurityGroupIdParam:
+    Type: String
+    Description: ID of the RDS security group
+
+Resources:
+  # Aurora Serverless v2 Cluster with RDS-managed Secret (REGIONAL)
+  DemoDBCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: !Sub "demo-${EnvironmentParam}-cluster"
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref DBMinACUParam
+        MaxCapacity: !Ref DBMaxACUParam
+      DatabaseName: !Ref DBNameParam
+      Engine: aurora-postgresql
+      EngineVersion: !Ref DBEngineVersionParam
+      MasterUsername: !Ref DBMasterUsernameParam
+      ManageMasterUserPassword: true
+      KmsKeyId: !Ref RDSKMSKeyArnParam
+      Port: 5432
+      DBSubnetGroupName: !Ref DemoRDSSubnetGroupIdParam
+      VpcSecurityGroupIds:
+        - !Ref RDSSecurityGroupIdParam
+      StorageEncrypted: true
+      DeletionProtection: !Ref DBDeletionProtectionParam
+      BackupRetentionPeriod: !Ref RDSBackupRetentionPeriodParam
+      EnableCloudwatchLogsExports:
+        - postgresql
+      Tags:
+        - Key: Name
+          Value: !Sub demo-db-cluster-${EnvironmentParam}
+        - Key: Environment
+          Value: !Ref EnvironmentParam
+
+  # Primary DB Instance
+  DemoDBPrimaryInstance:
+    Type: AWS::RDS::DBInstance
+    Properties: 
+      DBInstanceIdentifier: !Sub "demo-${EnvironmentParam}-primary"
+      DBInstanceClass: db.serverless
+      DBClusterIdentifier: !Ref DemoDBCluster
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      Tags:
+        - Key: Name
+          Value: !Sub demo-db-primary-${EnvironmentParam}
+        - Key: Environment
+          Value: !Ref EnvironmentParam
+
+  # Read Replica Instance
+  DemoDBReadReplica:
+    Type: AWS::RDS::DBInstance
+    DependsOn: DemoDBPrimaryInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "demo-${EnvironmentParam}-replica"
+      DBInstanceClass: db.serverless
+      DBClusterIdentifier: !Ref DemoDBCluster
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+      PromotionTier: 5
+      Tags:
+        - Key: Name
+          Value: !Sub demo-db-replica-${EnvironmentParam}
+        - Key: Environment
+          Value: !Ref EnvironmentParam
+
+Outputs:
+  DemoDBClusterIdentifier:
+    Description: DB cluster identifier for demo Aurora cluster
+    Value: !Ref DemoDBCluster
+    Export:
+      Name: !Sub demo-db-cluster-id-${EnvironmentParam}
+    
+  DemoDBWriteEndpoint:
+    Description: Writer endpoint for demo database
+    Value: !GetAtt DemoDBCluster.Endpoint.Address
+    Export:
+      Name: !Sub demo-db-write-endpoint-${EnvironmentParam}
+
+  DemoDBReadEndpoint:
+    Description: Reader endpoint for demo database
+    Value: !GetAtt DemoDBCluster.ReadEndpoint.Address
+    Export:
+      Name: !Sub demo-db-read-endpoint-${EnvironmentParam}
+  
+  DemoDBPort:
+    Description: Port number for demo database
+    Value: !GetAtt DemoDBCluster.Endpoint.Port
+    Export:
+      Name: !Sub demo-db-port-${EnvironmentParam}
+
+  DemoDBName:
+    Description: Database name for demo database
+    Value: !Ref DBNameParam
+    Export:
+      Name: !Sub demo-db-name-${EnvironmentParam}
+
+  DemoDBMasterUsername:
+    Description: Master username for demo database
+    Value: !Ref DBMasterUsernameParam
+    Export:
+      Name: !Sub demo-db-master-username-${EnvironmentParam}
+
+  DemoDBSecretArn:
+    Description: ARN of the RDS-managed secret containing master user credentials
+    Value: !GetAtt DemoDBCluster.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub demo-db-secret-arn-${EnvironmentParam}

@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - CloudFormation stack for Lambda functions
+Parameters:
+  EnvironmentParam:
+    Type: String
+  LambdaSubnetIds:
+    Type: CommaDelimitedList
+    Description: Subnet IDs for the lambda functions
+  LambdaSecurityGroups:
+    Type: String
+    Description: Security Group IDs for the lambda functions
+  LambdaRuntime:
+    Type: String
+    Description: The runtime for the lambda functions
+    Default: python3.13
+  Timezone:
+    Type: String
+    Description: The timezone for the lambda functions
+    Default: America/New_York
+  LambdaArchitecture:
+    Type: String
+    Description: The architecture for the lambda functions
+    Default: arm64
+  LambdaLayerUpdateReplacePolicyParam:
+    Type: String
+    Description: Resource replace policy for the lambda layer
+  LambdaLayerS3ObjectVersionParam:
+    Type: String
+    Description: The S3 object version for the lambda layer
+  DemoAntivirusScannerECRRepositoryTag:
+    Type: String
+    Description: The tag of the antivirus scanner ECR repository
+    Default: latest
+
+
+Resources:
+  DemoLambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: article-demo-layer
+      Description: !Join ['-', [ArticleDemoLayer, !Ref LambdaLayerS3ObjectVersionParam]]
+      Content:
+        S3Bucket: !ImportValue demo-s3-bucket-for-main-stack   # import from 00-technical-stack.yaml
+        S3Key: lambda_layer.zip
+        S3ObjectVersion: !Ref LambdaLayerS3ObjectVersionParam
+      CompatibleArchitectures:
+        - !Ref LambdaArchitecture
+      CompatibleRuntimes:
+        - !Ref LambdaRuntime
+    UpdateReplacePolicy: !Ref LambdaLayerUpdateReplacePolicyParam
+
+  DemoLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'article-demo-lambda-execution-role-cfn-${AWS::Region}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: ArticleDemoLambdaExecutionPolicy-cfn
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*'
+  
+  ###
+  ###   Lambda for Article Demo from plain code
+  ###
+  DemoLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: demo-lambda-function
+      Handler: demo_lambda_function.lambda_handler
+      Role: !GetAtt DemoLambdaExecutionRole.Arn
+      Code: ../lambda-functions/demo_lambda/demo_lambda_function.py
+      Runtime: !Ref LambdaRuntime
+      VpcConfig:
+        SecurityGroupIds: !Split [",", !Ref LambdaSecurityGroups]
+        SubnetIds: !Ref LambdaSubnetIds
+      Timeout: 300
+      Architectures:
+        - !Ref LambdaArchitecture
+      MemorySize: 1024
+      Layers:
+        - !Ref DemoLambdaLayer
+      Environment:
+        Variables:
+          TZ: !Ref Timezone
+          PROFILE: !Ref EnvironmentParam
+
+  ###
+  ###   Lambda for Article Demo antivirus scanner from Docker image
+  ###
+  DemoAntivirusScanner:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: demo-antivirus-scanner
+      Role: !GetAtt DemoLambdaExecutionRole.Arn
+      PackageType: Image
+      Code:
+        ImageUri: !Join [':', [!ImportValue demo-ecr-repository-uri-for-antivirus-scanner, !Ref DemoAntivirusScannerECRRepositoryTag]]
+      VpcConfig:
+        SecurityGroupIds: !Split [",", !Ref LambdaSecurityGroups]
+        SubnetIds: !Ref LambdaSubnetIds
+      Timeout: 300
+      Architectures:
+        - arm64
+      MemorySize: 4096
+          

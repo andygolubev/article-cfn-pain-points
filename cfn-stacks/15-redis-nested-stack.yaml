@@ -1,0 +1,153 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - ElastiCache Redis cluster stack
+
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack to
+    AllowedValues: ["dev", "stage", "prod"]
+  VpcIdParam:
+    Type: String
+    Description: VPC ID for the Redis cluster
+  VpcCidrParam:
+    Type: String
+    Description: CIDR block of the VPC
+  SubnetIdsParam:
+    Type: CommaDelimitedList
+    Description: Comma-separated list of subnet IDs for Redis
+  EngineVersionParam:
+    Type: String
+    Description: Redis engine version
+    Default: "7.0"
+  InstanceTypeParam:
+    Type: String
+    Description: ElastiCache node instance type
+    Default: "cache.t3.micro"
+  NumberOfReplicasParam:
+    Type: Number
+    Description: Number of replica nodes in the cluster
+    Default: 2
+  EnableAutomaticFailoverParam:
+    Type: String
+    Description: Enable automatic failover for high availability
+    AllowedValues: ["true", "false"]
+    Default: "true"
+  EnableMultiAZParam:
+    Type: String
+    Description: Enable Multi-AZ deployment
+    AllowedValues: ["true", "false"]
+    Default: "true"
+  RedisKmsKeyIdParam:
+    Type: String
+    Description: KMS key ARN for Redis encryption
+
+Resources:
+  # ElastiCache Subnet Group
+  DemoRedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub "Demo Redis subnet group for ${EnvironmentParam} environment"
+      SubnetIds: !Ref SubnetIdsParam
+      CacheSubnetGroupName: !Sub "demo-redis-subnet-group-${EnvironmentParam}"
+      Tags:
+        - Key: Name
+          Value: !Sub demo-redis-subnet-group-${EnvironmentParam}
+        - Key: Environment
+          Value: !Ref EnvironmentParam
+        - Key: Owner
+          Value: Article Demo
+
+  # Security Group for Redis
+  DemoRedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for demo Redis cluster in ${EnvironmentParam}"
+      GroupName: !Sub "demo-redis-sg-${EnvironmentParam}"
+      VpcId: !Ref VpcIdParam
+      SecurityGroupIngress:
+        - FromPort: 6379
+          ToPort: 6379
+          IpProtocol: tcp
+          CidrIp: !Ref VpcCidrParam
+          Description: Allow Redis access from VPC
+      Tags:
+        - Key: Name
+          Value: !Sub demo-redis-sg-${EnvironmentParam}
+        - Key: Environment
+          Value: !Ref EnvironmentParam
+        - Key: Owner
+          Value: Article Demo
+
+  # Redis Replication Group
+  DemoRedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      AtRestEncryptionEnabled: true
+      AutomaticFailoverEnabled: !Ref EnableAutomaticFailoverParam
+      ReplicationGroupDescription: !Sub "Demo Redis replication group for ${EnvironmentParam} environment"
+      ReplicationGroupId: !Sub "demo-${EnvironmentParam}-redis"
+      Engine: redis
+      EngineVersion: !Ref EngineVersionParam
+      CacheNodeType: !Ref InstanceTypeParam
+      NumCacheClusters: !Ref NumberOfReplicasParam
+      CacheSubnetGroupName: !Ref DemoRedisSubnetGroup
+      ClusterMode: disabled
+      MultiAZEnabled: !Ref EnableMultiAZParam
+      TransitEncryptionEnabled: true
+      KmsKeyId: !Ref RedisKmsKeyIdParam
+      SecurityGroupIds:
+        - !Ref DemoRedisSecurityGroup
+      PreferredMaintenanceWindow: "sun:03:00-sun:04:00"
+      SnapshotRetentionLimit: 5
+      SnapshotWindow: "02:00-03:00"
+      Tags:
+        - Key: Name
+          Value: !Sub demo-redis-${EnvironmentParam}
+        - Key: Environment
+          Value: !Ref EnvironmentParam
+        - Key: Owner
+          Value: Article Demo
+
+  # SSM Parameter for Redis Primary Endpoint
+  DemoRedisPrimaryEndpointParameter:
+    Type: AWS::SSM::Parameter
+    DependsOn: DemoRedisReplicationGroup
+    Properties:
+      Name: !Sub "/demo/${EnvironmentParam}/redis/primary-endpoint"
+      Description: !Sub "Demo Redis primary endpoint for ${EnvironmentParam}"
+      Type: String
+      Value: !GetAtt DemoRedisReplicationGroup.PrimaryEndPoint.Address
+      Tags:
+        Environment: !Ref EnvironmentParam
+        Owner: Article Demo
+
+Outputs:
+  DemoRedisPrimaryEndpoint:
+    Description: Primary endpoint address for demo Redis cluster
+    Value: !GetAtt DemoRedisReplicationGroup.PrimaryEndPoint.Address
+    Export:
+      Name: !Sub demo-redis-primary-endpoint-${EnvironmentParam}
+
+  DemoRedisReaderEndpoint:
+    Description: Reader endpoint address for demo Redis cluster
+    Value: !GetAtt DemoRedisReplicationGroup.ReaderEndPoint.Address
+    Export:
+      Name: !Sub demo-redis-reader-endpoint-${EnvironmentParam}
+
+  DemoRedisPort:
+    Description: Port number for demo Redis cluster
+    Value: !GetAtt DemoRedisReplicationGroup.PrimaryEndPoint.Port
+    Export:
+      Name: !Sub demo-redis-port-${EnvironmentParam}
+
+  DemoRedisReplicationGroupId:
+    Description: Replication group ID for demo Redis cluster
+    Value: !Ref DemoRedisReplicationGroup
+    Export:
+      Name: !Sub demo-redis-replication-group-id-${EnvironmentParam}
+
+  DemoRedisSecurityGroupId:
+    Description: Security group ID for demo Redis cluster
+    Value: !Ref DemoRedisSecurityGroup
+    Export:
+      Name: !Sub demo-redis-security-group-id-${EnvironmentParam}

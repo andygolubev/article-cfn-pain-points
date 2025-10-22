@@ -1,0 +1,32 @@
+{
+    "Statement" : [
+    {
+      "Sid": "ProtectResourceTypes",
+      "Effect" : "Deny",
+      "Principal" : "*",
+      "Action" : [
+          "Update:Replace", 
+          "Update:Delete"
+      ],
+      "Resource" : "*",
+      "Condition" : {
+        "StringEquals" : {
+          "ResourceType" : [
+              "AWS::CloudFormation::Stack",
+              "AWS::EC2::EIP",
+              "AWS::RDS::DBInstance",
+              "AWS::S3::Bucket",
+              "AWS::Backup::BackupVault"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ExplicitlyAllowAllOther",
+      "Effect" : "Allow",
+      "Principal" : "*",
+      "Action" : "Update:*",
+      "Resource" : "*"
+    }
+    ]
+  }

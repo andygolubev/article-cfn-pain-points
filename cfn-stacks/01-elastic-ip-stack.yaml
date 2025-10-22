@@ -1,0 +1,61 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - Elastic IP addresses stack
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack to (dev, stage, prod)
+
+Resources:
+  DemoNATGatewayEIP1:
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub DemoNATGatewayEIP1-${EnvironmentParam}
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  DemoNATGatewayEIP2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub DemoNATGatewayEIP2-${EnvironmentParam}
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+  DemoNATGatewayEIP3:
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub DemoNATGatewayEIP3-${EnvironmentParam}
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+
+
+Outputs:
+  DemoNATGatewayEIP1:
+    Value: !Ref DemoNATGatewayEIP1
+    Export:
+      Name: demo-nat-gateway-eip-1
+  DemoNATGatewayEIP2:
+    Value: !Ref DemoNATGatewayEIP2
+    Export:
+      Name: demo-nat-gateway-eip-2
+  DemoNATGatewayEIP3:
+    Value: !Ref DemoNATGatewayEIP3
+    Export:
+      Name: demo-nat-gateway-eip-3
+  DemoNATGatewayEIP1AllocationId:
+    Value: !GetAtt DemoNATGatewayEIP1.AllocationId
+    Export:
+      Name: demo-nat-gateway-eip-1-allocation-id
+  DemoNATGatewayEIP2AllocationId:
+    Value: !GetAtt DemoNATGatewayEIP2.AllocationId
+    Export:
+      Name: demo-nat-gateway-eip-2-allocation-id
+  DemoNATGatewayEIP3AllocationId:
+    Value: !GetAtt DemoNATGatewayEIP3.AllocationId
+    Export:
+      Name: demo-nat-gateway-eip-3-allocation-id

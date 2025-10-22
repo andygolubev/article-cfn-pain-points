@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Article Demo - AWS WAF Web Application Firewall stack
+
+Parameters:
+  EnvironmentParam:
+    Type: String
+    Description: The environment to deploy the stack to
+    AllowedValues: ["dev", "stage", "prod"]
+
+  ScopeParam:
+    Type: String
+    Description: Scope of the WAF (REGIONAL for ALB/API Gateway, CLOUDFRONT for CloudFront)
+    Default: REGIONAL
+    AllowedValues:
+      - REGIONAL
+      - CLOUDFRONT
+
+  DemoApiGatewayArnParam:
+    Type: String
+    Description: ARN of the API Gateway to protect with WAF
+    Default: ""
+
+Resources:
+  DemoAppleReviewersIPSet:
+    Type: AWS::WAFv2::IPSet
+    Properties:
+      Name: DemoAppleReviewersIPSet
+      Scope: !Ref ScopeParam
+      IPAddressVersion: IPV4
+      Addresses:
+        - 17.0.0.0/8
+
+  DemoWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: DemoWebACL
+      Scope: !Ref ScopeParam
+      VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: demoWafMetric
+      DefaultAction:
+        Allow: {}
+      Rules:
+        - Name: AWS-AWSManagedRulesCommonRuleSet
+          Priority: 8
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: coreWebApplicationRules
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules:
+                - Name: SizeRestrictions_BODY
+                - Name: CrossSiteScripting_BODY
+                - Name: GenericLFI_BODY
+        # AWSManagedRulesKnownBadInputsRuleSet
+        - Name: AWS-AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 9
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: knownBadInputsRule
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+        # AWSManagedRulesUnixRuleSet
+        - Name: AWS-AWSManagedRulesUnixRuleSet
+          Priority: 10
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: posixVulnerabilitiesRule
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesUnixRuleSet
+        # AllowAppleReviewersRule
+        - Name: AllowAppleReviewersRule
+          Priority: 11
+          Action:
+            Allow: {}
+          Statement:
+            IPSetReferenceStatement:
+              Arn: !GetAtt DemoAppleReviewersIPSet.Arn
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AllowAppleReviewersRule
+        # AWSManagedRulesAnonymousIpList
+        - Name: AWS-AWSManagedRulesAnonymousIpList
+          Priority: 12
+          OverrideAction:
+            None: {}
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: anonymousIpRule
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesAnonymousIpList
+
+
+  DemoWebACLAssociation: # API Gateway
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !Ref DemoApiGatewayArnParam
+      WebACLArn: !GetAtt DemoWebACL.Arn
+
+
+Outputs:
+  DemoWebACLArn:
+    Description: The ARN of the Demo WebACL
+    Value: !GetAtt DemoWebACL.Arn
